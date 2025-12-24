@@ -1,40 +1,60 @@
 from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-import httpx
+from apscheduler.triggers.interval import IntervalTrigger
+from zoneinfo import ZoneInfo
 
 from app.core.config import settings
+from app.core.db import SessionLocal
+
 from app.routers.chat import router as chat_router
 from app.routers.drafts import router as drafts_router
 from app.routers.tasks import router as tasks_router
 from app.routers.followup import router as followup_router
 
+from app.routers.reminders import router as reminders_router
+from app.routers.notifications import router as notifications_router
+
+from app.services.reminders import scan_deadline_reminders
+from app.services.notification_render import render_and_project_in_app
+
 app = FastAPI(title="MOS Backend")
+
 app.include_router(chat_router)
 app.include_router(drafts_router)
 app.include_router(tasks_router)
 app.include_router(followup_router)
 
-scheduler = AsyncIOScheduler(timezone=settings.TZ)
+app.include_router(reminders_router)
+app.include_router(notifications_router)
 
-def _hhmm_to_cron(hhmm: str):
-    h, m = hhmm.split(":")
-    return int(m), int(h)
+scheduler = AsyncIOScheduler(timezone=ZoneInfo(settings.TZ))
+
 
 @app.on_event("startup")
 async def startup():
-    # 自分自身のAPIを叩く（Phase1の手抜き実装。後で内部関数呼び出しに置換可）
-    async def hit(slot: str):
-        async with httpx.AsyncClient() as client:
-            await client.post("http://localhost:8000/api/followup/run", params={"slot": slot}, timeout=30)
+    async def scan_job():
+        async with SessionLocal() as db:
+            await scan_deadline_reminders(db, limit_new_events=10)
 
-    m, h = _hhmm_to_cron(settings.FOLLOWUP_MORNING)
-    scheduler.add_job(hit, CronTrigger(hour=h, minute=m), args=["morning"], id="followup_morning")
+    async def render_job():
+        async with SessionLocal() as db:
+            await render_and_project_in_app(db)
 
-    m, h = _hhmm_to_cron(settings.FOLLOWUP_NOON)
-    scheduler.add_job(hit, CronTrigger(hour=h, minute=m), args=["noon"], id="followup_noon")
+    scheduler.add_job(
+        scan_job,
+        IntervalTrigger(minutes=settings.REMINDER_SCAN_INTERVAL_MIN),
+        id="deadline_scan",
+        max_instances=1,
+        coalesce=True,
+    )
 
-    m, h = _hhmm_to_cron(settings.FOLLOWUP_EVENING)
-    scheduler.add_job(hit, CronTrigger(hour=h, minute=m), args=["evening"], id="followup_evening")
+    # created が溜まったら消化する（Phase1の簡易ワーカー）
+    scheduler.add_job(
+        render_job,
+        IntervalTrigger(minutes=1),
+        id="notification_render",
+        max_instances=1,
+        coalesce=True,
+    )
 
     scheduler.start()
