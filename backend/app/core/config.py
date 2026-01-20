@@ -21,4 +21,8 @@ class Settings(BaseSettings):
     FOLLOWUP_NOON: str = "13:00"
     FOLLOWUP_EVENING: str = "18:00"
 
+    # Reminders & Notifications
+    REMINDER_SCAN_INTERVAL_MIN: int = 10
+    RENDER_BATCH_SIZE: int = 10
+
 settings = Settings()
