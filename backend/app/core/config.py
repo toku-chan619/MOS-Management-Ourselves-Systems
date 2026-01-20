@@ -25,4 +25,12 @@ class Settings(BaseSettings):
     REMINDER_SCAN_INTERVAL_MIN: int = 10
     RENDER_BATCH_SIZE: int = 10
 
+    # CORS Configuration
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS origins from comma-separated string"""
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
 settings = Settings()
