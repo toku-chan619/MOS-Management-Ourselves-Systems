@@ -84,16 +84,43 @@ MOS（Management Ourselves System）は、個人のタスクを **チャット�
 
 ---
 
-## セットアップ（Backend）
-### 1) 依存
-- Python 3.11+ 推奨
-- Docker / Docker Compose
-- （LLM利用する場合）OpenAI等のAPIキー
+## セットアップ
 
-### 2) 起動（DB/Redis）
+### クイックスタート（Docker）
+
+**推奨**: Docker Composeを使用した完全なセットアップ手順は **[Docker Setup Guide](./docs/DOCKER_SETUP.md)** を参照してください。
+
+#### 必要なもの
+- Docker & Docker Compose
+- OpenAI API キー（または代替LLMバックエンド）
+
+#### 基本手順
 ```bash
-cd backend
+# 1. リポジトリをクローン
+git clone https://github.com/yourusername/MOS-Management-Ourselves-Systems.git
+cd MOS-Management-Ourselves-Systems/backend
+
+# 2. 環境変数を設定
+cp .env.example .env
+# .env を編集して OPENAI_API_KEY などを設定
+
+# 3. Docker Composeで起動
 docker-compose up -d
+
+# 4. APIが起動していることを確認
+curl http://localhost:8000/health
+```
+
+**詳細なトラブルシューティング、本番環境設定、代替LLMバックエンドについては [Docker Setup Guide](./docs/DOCKER_SETUP.md) を参照。**
+
+---
+
+## ドキュメント
+
+- **[Docker Setup Guide](./docs/DOCKER_SETUP.md)**: Docker環境でのセットアップ・運用ガイド
+- **[LLM Providers](./docs/LLM_PROVIDERS.md)**: LLMバックエンドの選択と設定（OpenAI / Claude CLI / Ollama）
+
+---
 
 ## Secrets / 設定について
 - APIキー、ID/PW等のシークレットは **ソースコードにハードコーディングしない**
