@@ -1,6 +1,6 @@
 import uuid
 from sqlalchemy import DateTime, Text
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from app.models.base import Base
@@ -12,5 +12,5 @@ class AgentRun(Base):
     message_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
     model: Mapped[str] = mapped_column(Text, nullable=False)
-    extracted_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    extracted_json: Mapped[dict] = mapped_column(nullable=False)  # Uses Base type_annotation_map
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
