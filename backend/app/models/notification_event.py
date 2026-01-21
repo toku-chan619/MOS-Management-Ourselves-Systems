@@ -1,6 +1,6 @@
 import uuid
 from sqlalchemy import DateTime, Text, ForeignKey
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 from app.models.base import Base
@@ -29,7 +29,7 @@ class NotificationEvent(Base):
     # diff-based followup support
     since: Mapped[object | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    payload: Mapped[dict] = mapped_column(nullable=False, default=dict)  # Uses Base type_annotation_map
     rendered_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # created/rendered/failed

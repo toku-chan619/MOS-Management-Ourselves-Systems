@@ -1,0 +1,15 @@
+# Development Dependencies
+-r requirements.txt
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0
+httpx==0.28.1
+
+# Code Quality
+black==24.10.0
+flake8==7.1.1
+mypy==1.13.0
+
+# Database Testing
+pytest-postgresql==6.1.1

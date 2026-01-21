@@ -2,13 +2,17 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, insert
+from sqlalchemy.exc import SQLAlchemyError
 from app.core.db import get_db
+from app.core.logging import get_logger
+from app.core.enums import DraftStatus
 from app.models.draft import TaskDraft
 from app.models.task import Task
 from app.models.project import Project
 from app.schemas.draft import ExtractedDraft
 
 router = APIRouter(prefix="/api/task-drafts", tags=["drafts"])
+logger = get_logger(__name__)
 
 @router.get("")
 async def list_drafts(status: str = "proposed", db: AsyncSession = Depends(get_db)):
@@ -36,74 +40,282 @@ async def _get_or_create_project(db: AsyncSession, name: str | None) -> uuid.UUI
 
 @router.post("/{draft_id}/accept")
 async def accept_draft(draft_id: str, db: AsyncSession = Depends(get_db)):
-    draft = (await db.execute(select(TaskDraft).where(TaskDraft.id == uuid.UUID(draft_id)))).scalars().first()
-    if not draft:
-        raise HTTPException(404, "draft not found")
-    if draft.status != "proposed":
-        raise HTTPException(400, "draft is not proposed")
+    """
+    Accept a proposed task draft and create actual tasks.
 
-    extracted = ExtractedDraft.model_validate(draft.draft_json)
+    This endpoint:
+    1. Validates the draft exists and is in 'proposed' status
+    2. Validates task hierarchy (parent references, depth)
+    3. Creates or reuses projects
+    4. Creates tasks in proper order (parents before children)
+    5. Marks draft as 'accepted'
 
-    # 深さ制限や親参照の妥当性チェック（簡易）
-    temp_ids = {t.temp_id for t in extracted.tasks}
-    for t in extracted.tasks:
-        if t.parent_temp_id and t.parent_temp_id not in temp_ids:
-            raise HTTPException(400, f"parent_temp_id not found: {t.parent_temp_id}")
+    All operations are performed in a single transaction for atomicity.
+    """
+    try:
+        draft_uuid = uuid.UUID(draft_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid draft_id format")
 
-    # まずプロジェクト候補をまとめて作る（最初の実装はタスクごとに作ってもOK）
-    project_cache: dict[str, uuid.UUID] = {}
+    logger.info("Accepting task draft", draft_id=draft_id)
 
-    # temp_id -> task_id
-    id_map: dict[str, uuid.UUID] = {}
-
-    # 親から作りたいので、親なし→ありの順に複数パスで挿入（シンプル実装）
-    remaining = extracted.tasks[:]
-    max_passes = 5
-
-    for _ in range(max_passes):
-        next_remaining = []
-        progressed = False
-
-        for t in remaining:
-            if t.parent_temp_id and t.parent_temp_id not in id_map:
-                next_remaining.append(t)
-                continue
-
-            # project
-            proj_id = None
-            if t.project_suggestion:
-                if t.project_suggestion in project_cache:
-                    proj_id = project_cache[t.project_suggestion]
-                else:
-                    proj_id = await _get_or_create_project(db, t.project_suggestion)
-                    project_cache[t.project_suggestion] = proj_id
-
-            parent_id = id_map.get(t.parent_temp_id) if t.parent_temp_id else None
-
-            res = await db.execute(
-                insert(Task).values(
-                    project_id=proj_id,
-                    parent_task_id=parent_id,
-                    title=t.title,
-                    description=t.description,
-                    status=t.status,
-                    priority=t.priority,
-                    due_date=t.due_date,
-                    due_time=t.due_time,
-                    source="chat",
-                ).returning(Task.id)
+    try:
+        # Fetch draft
+        draft = (
+            await db.execute(
+                select(TaskDraft).where(TaskDraft.id == draft_uuid)
             )
-            task_id = res.scalar_one()
-            id_map[t.temp_id] = task_id
-            progressed = True
+        ).scalars().first()
 
-        remaining = next_remaining
-        if not remaining:
-            break
-        if not progressed:
-            raise HTTPException(400, "could not resolve task hierarchy (cycle or too deep)")
+        if not draft:
+            logger.warning("Draft not found", draft_id=draft_id)
+            raise HTTPException(404, "Draft not found")
 
-    await db.execute(update(TaskDraft).where(TaskDraft.id == draft.id).values(status="accepted"))
-    await db.commit()
+        if draft.status != DraftStatus.PROPOSED.value:
+            logger.warning(
+                "Draft is not in proposed status",
+                draft_id=draft_id,
+                status=draft.status
+            )
+            raise HTTPException(400, f"Draft is not proposed (status: {draft.status})")
 
-    return {"created_task_ids": [str(v) for v in id_map.values()]}
+        # Parse and validate draft
+        try:
+            extracted = ExtractedDraft.model_validate(draft.draft_json)
+        except Exception as e:
+            logger.error(
+                "Failed to parse draft JSON",
+                draft_id=draft_id,
+                error=str(e)
+            )
+            raise HTTPException(400, f"Invalid draft JSON: {str(e)}")
+
+        # Validate task hierarchy
+        temp_ids = {t.temp_id for t in extracted.tasks}
+        for t in extracted.tasks:
+            if t.parent_temp_id and t.parent_temp_id not in temp_ids:
+                logger.error(
+                    "Invalid parent reference in draft",
+                    draft_id=draft_id,
+                    task_temp_id=t.temp_id,
+                    parent_temp_id=t.parent_temp_id
+                )
+                raise HTTPException(
+                    400,
+                    f"Parent temp_id not found: {t.parent_temp_id}"
+                )
+
+        logger.info(
+            "Processing draft tasks",
+            draft_id=draft_id,
+            num_tasks=len(extracted.tasks)
+        )
+
+        # Use nested transaction for rollback safety
+        async with db.begin_nested():
+            project_cache: dict[str, uuid.UUID] = {}
+            id_map: dict[str, uuid.UUID] = {}
+
+            # Create tasks in multiple passes (parents first)
+            remaining = extracted.tasks[:]
+            max_passes = 5
+
+            for pass_num in range(max_passes):
+                next_remaining = []
+                progressed = False
+
+                for t in remaining:
+                    # Check if parent is ready
+                    if t.parent_temp_id and t.parent_temp_id not in id_map:
+                        next_remaining.append(t)
+                        continue
+
+                    # Get or create project
+                    proj_id = None
+                    if t.project_suggestion:
+                        if t.project_suggestion in project_cache:
+                            proj_id = project_cache[t.project_suggestion]
+                        else:
+                            proj_id = await _get_or_create_project(
+                                db,
+                                t.project_suggestion
+                            )
+                            if proj_id:
+                                project_cache[t.project_suggestion] = proj_id
+
+                    parent_id = (
+                        id_map.get(t.parent_temp_id)
+                        if t.parent_temp_id
+                        else None
+                    )
+
+                    # Create task
+                    res = await db.execute(
+                        insert(Task)
+                        .values(
+                            project_id=proj_id,
+                            parent_task_id=parent_id,
+                            title=t.title,
+                            description=t.description,
+                            status=t.status,
+                            priority=t.priority,
+                            due_date=t.due_date,
+                            due_time=t.due_time,
+                            source="chat",
+                        )
+                        .returning(Task.id)
+                    )
+                    task_id = res.scalar_one()
+                    id_map[t.temp_id] = task_id
+                    progressed = True
+
+                    logger.debug(
+                        "Created task",
+                        temp_id=t.temp_id,
+                        task_id=str(task_id),
+                        title=t.title
+                    )
+
+                remaining = next_remaining
+                if not remaining:
+                    break
+
+                if not progressed:
+                    logger.error(
+                        "Could not resolve task hierarchy",
+                        draft_id=draft_id,
+                        remaining_tasks=len(remaining)
+                    )
+                    raise HTTPException(
+                        400,
+                        "Could not resolve task hierarchy (cycle or too deep)"
+                    )
+
+            # Mark draft as accepted
+            await db.execute(
+                update(TaskDraft)
+                .where(TaskDraft.id == draft.id)
+                .values(status=DraftStatus.ACCEPTED.value)
+            )
+
+        # Commit transaction
+        await db.commit()
+
+        created_ids = [str(v) for v in id_map.values()]
+        logger.info(
+            "Draft accepted successfully",
+            draft_id=draft_id,
+            num_tasks_created=len(created_ids)
+        )
+
+        return {"created_task_ids": created_ids}
+
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(
+            "Database error accepting draft",
+            draft_id=draft_id,
+            error=str(e)
+        )
+        raise HTTPException(500, "Database error occurred")
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            "Unexpected error accepting draft",
+            draft_id=draft_id,
+            error=str(e)
+        )
+        raise HTTPException(500, f"Unexpected error: {str(e)}")
+
+
+@router.post("/{draft_id}/reject")
+async def reject_draft(
+    draft_id: str,
+    reason: str = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reject a proposed task draft.
+
+    Optionally provide a reason for rejection (for future analytics/learning).
+
+    Args:
+        draft_id: UUID of the draft to reject
+        reason: Optional reason for rejection
+
+    Returns:
+        Success response
+    """
+    try:
+        draft_uuid = uuid.UUID(draft_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid draft_id format")
+
+    logger.info("Rejecting task draft", draft_id=draft_id, reason=reason)
+
+    try:
+        # Fetch draft
+        draft = (
+            await db.execute(
+                select(TaskDraft).where(TaskDraft.id == draft_uuid)
+            )
+        ).scalars().first()
+
+        if not draft:
+            logger.warning("Draft not found", draft_id=draft_id)
+            raise HTTPException(404, "Draft not found")
+
+        if draft.status != DraftStatus.PROPOSED.value:
+            logger.warning(
+                "Draft is not in proposed status",
+                draft_id=draft_id,
+                status=draft.status
+            )
+            raise HTTPException(400, f"Draft is not proposed (status: {draft.status})")
+
+        # Mark draft as rejected
+        await db.execute(
+            update(TaskDraft)
+            .where(TaskDraft.id == draft.id)
+            .values(status=DraftStatus.REJECTED.value)
+        )
+        await db.commit()
+
+        logger.info(
+            "Draft rejected successfully",
+            draft_id=draft_id,
+            reason=reason
+        )
+
+        return {
+            "status": "rejected",
+            "draft_id": draft_id,
+            "message": "Draft rejected successfully"
+        }
+
+    except HTTPException:
+        await db.rollback()
+        raise
+
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(
+            "Database error rejecting draft",
+            draft_id=draft_id,
+            error=str(e)
+        )
+        raise HTTPException(500, "Database error occurred")
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            "Unexpected error rejecting draft",
+            draft_id=draft_id,
+            error=str(e)
+        )
+        raise HTTPException(500, f"Unexpected error: {str(e)}")
