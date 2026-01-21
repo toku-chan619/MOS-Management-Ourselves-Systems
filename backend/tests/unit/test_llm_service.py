@@ -1,31 +1,35 @@
 """
-Unit tests for LLM service.
+Unit tests for LLM service (provider abstraction layer).
 """
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from openai import RateLimitError, APIConnectionError, APIError
-from app.services.llm import call_llm_json
+from app.services.llm import call_llm_json, get_llm_provider
 from app.core.exceptions import LLMAPIError, RetryableError
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_call_llm_json_success():
-    """Test successful LLM API call."""
+    """Test successful LLM API call via provider."""
     mock_response = MagicMock()
     mock_response.choices = [MagicMock()]
     mock_response.choices[0].message.content = '{"result": "success"}'
     mock_response.usage.total_tokens = 100
 
-    with patch('app.services.llm.AsyncOpenAI') as mock_client_class:
+    with patch('app.services.openai_provider.AsyncOpenAI') as mock_client_class:
         mock_client = AsyncMock()
         mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
         mock_client_class.return_value = mock_client
 
-        result = await call_llm_json("system prompt", "user text")
+        with patch('app.services.llm.get_llm_provider') as mock_get_provider:
+            # Clear LRU cache
+            get_llm_provider.cache_clear()
 
-        assert result == {"result": "success"}
-        mock_client.chat.completions.create.assert_called_once()
+            result = await call_llm_json("system prompt", "user text")
+
+            assert result == {"result": "success"}
+            mock_client.chat.completions.create.assert_called_once()
 
 
 @pytest.mark.unit

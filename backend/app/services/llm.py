@@ -1,12 +1,58 @@
-import json
-import asyncio
+"""
+LLM service with provider abstraction.
+
+This module provides a unified interface for calling LLMs,
+supporting multiple backends (OpenAI API, Claude CLI, Ollama, etc.)
+"""
 from typing import Dict
-from openai import AsyncOpenAI, APIError, RateLimitError, APIConnectionError
+from functools import lru_cache
+
 from app.core.config import settings
-from app.core.exceptions import LLMAPIError, RetryableError
+from app.core.exceptions import LLMAPIError
 from app.core.logging import get_logger
+from app.services.llm_provider import LLMProvider, LLMBackend
 
 logger = get_logger(__name__)
+
+
+@lru_cache(maxsize=1)
+def get_llm_provider() -> LLMProvider:
+    """
+    Get the configured LLM provider.
+
+    Returns:
+        LLMProvider instance based on LLM_BACKEND setting
+
+    Raises:
+        LLMAPIError: When backend is not supported
+    """
+    backend = settings.LLM_BACKEND.lower()
+
+    logger.info(
+        "Initializing LLM provider",
+        backend=backend
+    )
+
+    if backend == LLMBackend.OPENAI_API:
+        from app.services.openai_provider import OpenAIProvider
+        return OpenAIProvider()
+
+    elif backend == LLMBackend.CLAUDE_CLI:
+        from app.services.cli_provider import ClaudeCLIProvider
+        return ClaudeCLIProvider()
+
+    elif backend == LLMBackend.OLLAMA_CLI:
+        from app.services.cli_provider import OllamaCLIProvider
+        return OllamaCLIProvider()
+
+    else:
+        raise LLMAPIError(
+            f"Unsupported LLM backend: {backend}",
+            {
+                "backend": backend,
+                "supported": [b.value for b in LLMBackend]
+            }
+        )
 
 
 async def call_llm_json(
@@ -16,8 +62,10 @@ async def call_llm_json(
     initial_delay: float = 1.0
 ) -> Dict:
     """
-    Call OpenAI LLM API with JSON response format.
-    Includes exponential backoff retry logic.
+    Call LLM with JSON response format.
+
+    This is the main entry point for LLM calls in the application.
+    It uses the configured LLM backend (OpenAI API, Claude CLI, Ollama, etc.)
 
     Args:
         system_prompt: System prompt for the LLM
@@ -29,119 +77,42 @@ async def call_llm_json(
         Parsed JSON response from LLM
 
     Raises:
-        LLMAPIError: When API call fails after all retries
+        LLMAPIError: When LLM call fails after all retries
     """
-    if not settings.OPENAI_API_KEY:
-        raise LLMAPIError("OPENAI_API_KEY is not set")
+    provider = get_llm_provider()
 
-    client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    logger.info(
+        "Calling LLM",
+        backend=settings.LLM_BACKEND,
+        model=provider.get_model_name()
+    )
 
-    for attempt in range(max_retries):
-        try:
-            logger.info(
-                "Calling OpenAI API",
-                model=settings.LLM_MODEL,
-                attempt=attempt + 1,
-                max_retries=max_retries
-            )
+    try:
+        result = await provider.call_json(
+            system_prompt=system_prompt,
+            user_text=user_text,
+            max_retries=max_retries,
+            initial_delay=initial_delay
+        )
 
-            resp = await client.chat.completions.create(
-                model=settings.LLM_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_text},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.2,
-            )
+        logger.info(
+            "LLM call successful",
+            backend=settings.LLM_BACKEND,
+            model=provider.get_model_name()
+        )
 
-            content = resp.choices[0].message.content
-            if not content:
-                raise LLMAPIError("Empty response from LLM")
+        return result
 
-            result = json.loads(content)
+    except LLMAPIError:
+        # Re-raise LLM errors as-is
+        raise
 
-            logger.info(
-                "OpenAI API call successful",
-                tokens_used=resp.usage.total_tokens if resp.usage else 0
-            )
-
-            return result
-
-        except RateLimitError as e:
-            logger.warning(
-                "Rate limit exceeded",
-                attempt=attempt + 1,
-                error=str(e)
-            )
-            if attempt < max_retries - 1:
-                delay = initial_delay * (2 ** attempt)
-                logger.info(f"Retrying in {delay} seconds...")
-                await asyncio.sleep(delay)
-            else:
-                raise RetryableError(
-                    "Rate limit exceeded after all retries",
-                    {"attempts": max_retries, "error": str(e)}
-                )
-
-        except APIConnectionError as e:
-            logger.warning(
-                "API connection error",
-                attempt=attempt + 1,
-                error=str(e)
-            )
-            if attempt < max_retries - 1:
-                delay = initial_delay * (2 ** attempt)
-                logger.info(f"Retrying in {delay} seconds...")
-                await asyncio.sleep(delay)
-            else:
-                raise RetryableError(
-                    "Connection error after all retries",
-                    {"attempts": max_retries, "error": str(e)}
-                )
-
-        except json.JSONDecodeError as e:
-            logger.error(
-                "Failed to parse JSON response",
-                content=content if 'content' in locals() else None,
-                error=str(e)
-            )
-            raise LLMAPIError(
-                "Invalid JSON response from LLM",
-                {"error": str(e)}
-            )
-
-        except APIError as e:
-            logger.error(
-                "OpenAI API error",
-                attempt=attempt + 1,
-                error=str(e)
-            )
-            # Don't retry on certain errors (e.g., invalid API key, model not found)
-            if e.status_code in [401, 404]:
-                raise LLMAPIError(
-                    f"OpenAI API error: {e.message}",
-                    {"status": e.status_code, "error": str(e)}
-                )
-            elif attempt < max_retries - 1:
-                delay = initial_delay * (2 ** attempt)
-                logger.info(f"Retrying in {delay} seconds...")
-                await asyncio.sleep(delay)
-            else:
-                raise LLMAPIError(
-                    f"API error after all retries: {e.message}",
-                    {"attempts": max_retries, "status": e.status_code}
-                )
-
-        except Exception as e:
-            logger.exception(
-                "Unexpected error calling OpenAI API",
-                error=str(e)
-            )
-            raise LLMAPIError(
-                f"Unexpected error: {str(e)}",
-                {"type": type(e).__name__}
-            )
-
-    # Should never reach here, but just in case
-    raise LLMAPIError("Failed to call LLM after all retries")
+    except Exception as e:
+        logger.exception(
+            "Unexpected error in LLM service",
+            error=str(e)
+        )
+        raise LLMAPIError(
+            f"Unexpected error: {str(e)}",
+            {"type": type(e).__name__}
+        )

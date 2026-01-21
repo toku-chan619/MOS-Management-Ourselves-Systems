@@ -8,11 +8,17 @@ class Settings(BaseSettings):
     REDIS_URL: str
 
     # Secrets: 必須（デフォルトを置かない）
-    OPENAI_API_KEY: str = Field(min_length=1)
+    OPENAI_API_KEY: str = Field(default="", min_length=0)  # Optional when using CLI backends
 
-    # これは秘密ではないのでデフォルト可
-    LLM_MODEL: str = "gpt-4.1-mini"
+    # LLM Configuration
+    LLM_BACKEND: str = "openai_api"  # openai_api, claude_cli, ollama_cli
+    LLM_MODEL: str = "gpt-4o-mini"
     PROMPT_VERSION: str = "phase1-extract-v1"
+
+    # CLI Backend Configuration (for claude_cli, ollama_cli)
+    CLAUDE_CLI_PATH: str = "claude"
+    OLLAMA_CLI_PATH: str = "ollama"
+    OLLAMA_MODEL: str = "llama2"
 
     APP_BASE_URL: AnyUrl = "http://localhost:8000"
 
