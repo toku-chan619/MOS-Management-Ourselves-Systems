@@ -335,6 +335,86 @@
 
 ---
 
+## LLM Provider抽象化 ✅ 完了
+
+### 概要
+**完了時刻**: 2026-01-21
+
+LLMバックエンドを抽象化し、複数のプロバイダをサポートするようにアーキテクチャを改善。
+
+### 実装内容
+
+#### プロバイダーパターンの導入
+- [x] `LLMProvider` 抽象基底クラス作成
+- [x] `OpenAIProvider` 実装（既存機能を移行）
+- [x] `ClaudeCLIProvider` スタブ実装
+- [x] `OllamaCLIProvider` スタブ実装
+- [x] ファクトリーパターンによるプロバイダ選択
+
+#### 設定の拡張
+- [x] `LLM_BACKEND` 設定追加（openai_api/claude_cli/ollama_cli）
+- [x] CLI Providerの設定オプション追加
+- [x] `.env.example` 更新
+
+#### Dockerサポート
+- [x] Dockerfile拡張（CLI Providerインストール用コメント）
+- [x] curl追加（CLIダウンロード用）
+
+#### ドキュメント
+- [x] `docs/LLM_PROVIDERS.md` 作成
+  - 各バックエンドの設定方法
+  - コスト比較
+  - トラブルシューティング
+  - アーキテクチャ説明
+
+### サポートバックエンド
+
+| Backend | Status | Use Case |
+|---------|--------|----------|
+| OpenAI API | ✅ 動作 | 本番環境推奨 |
+| Claude CLI | 🔄 準備完了 | CLI認証環境 |
+| Ollama | 🔄 準備完了 | ローカル/オフライン |
+
+### 技術的詳細
+
+**ファイル構成**:
+```
+app/services/
+├── llm.py                  # エントリーポイント（call_llm_json）
+├── llm_provider.py         # 抽象基底クラス
+├── openai_provider.py      # OpenAI実装（149行）
+└── cli_provider.py         # CLI実装（227行）
+```
+
+**切り替え方法**:
+```env
+# OpenAI API使用
+LLM_BACKEND=openai_api
+
+# Claude CLI使用（将来）
+LLM_BACKEND=claude_cli
+
+# Ollama使用（将来）
+LLM_BACKEND=ollama_cli
+OLLAMA_MODEL=llama2
+```
+
+### メリット
+
+1. **柔軟性**: 環境に応じてバックエンド切り替え可能
+2. **コスト最適化**: ローカルLLM（Ollama）でAPI費用削減
+3. **認証簡素化**: CLI認証でAPIキー管理不要
+4. **テスト容易性**: モックプロバイダ作成が簡単
+5. **将来拡張性**: 新しいLLMプロバイダ追加が容易
+
+### 後方互換性
+
+既存の`call_llm_json()`インターフェースは変更なし。内部でProviderを使用するため、既存コードはそのまま動作。
+
+**コミット**: `[次のコミット]` - LLM Provider抽象化: 複数バックエンドサポート
+
+---
+
 ## 開発メモ
 
 ### 運用費概算
