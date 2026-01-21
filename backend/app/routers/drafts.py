@@ -231,3 +231,91 @@ async def accept_draft(draft_id: str, db: AsyncSession = Depends(get_db)):
             error=str(e)
         )
         raise HTTPException(500, f"Unexpected error: {str(e)}")
+
+
+@router.post("/{draft_id}/reject")
+async def reject_draft(
+    draft_id: str,
+    reason: str = None,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reject a proposed task draft.
+
+    Optionally provide a reason for rejection (for future analytics/learning).
+
+    Args:
+        draft_id: UUID of the draft to reject
+        reason: Optional reason for rejection
+
+    Returns:
+        Success response
+    """
+    try:
+        draft_uuid = uuid.UUID(draft_id)
+    except ValueError:
+        raise HTTPException(400, "Invalid draft_id format")
+
+    logger.info("Rejecting task draft", draft_id=draft_id, reason=reason)
+
+    try:
+        # Fetch draft
+        draft = (
+            await db.execute(
+                select(TaskDraft).where(TaskDraft.id == draft_uuid)
+            )
+        ).scalars().first()
+
+        if not draft:
+            logger.warning("Draft not found", draft_id=draft_id)
+            raise HTTPException(404, "Draft not found")
+
+        if draft.status != DraftStatus.PROPOSED.value:
+            logger.warning(
+                "Draft is not in proposed status",
+                draft_id=draft_id,
+                status=draft.status
+            )
+            raise HTTPException(400, f"Draft is not proposed (status: {draft.status})")
+
+        # Mark draft as rejected
+        await db.execute(
+            update(TaskDraft)
+            .where(TaskDraft.id == draft.id)
+            .values(status=DraftStatus.REJECTED.value)
+        )
+        await db.commit()
+
+        logger.info(
+            "Draft rejected successfully",
+            draft_id=draft_id,
+            reason=reason
+        )
+
+        return {
+            "status": "rejected",
+            "draft_id": draft_id,
+            "message": "Draft rejected successfully"
+        }
+
+    except HTTPException:
+        await db.rollback()
+        raise
+
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(
+            "Database error rejecting draft",
+            draft_id=draft_id,
+            error=str(e)
+        )
+        raise HTTPException(500, "Database error occurred")
+
+    except Exception as e:
+        await db.rollback()
+        logger.exception(
+            "Unexpected error rejecting draft",
+            draft_id=draft_id,
+            error=str(e)
+        )
+        raise HTTPException(500, f"Unexpected error: {str(e)}")

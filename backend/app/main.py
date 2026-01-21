@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
@@ -13,6 +14,7 @@ from app.core.exceptions import MOSException
 from app.routers.chat import router as chat_router
 from app.routers.drafts import router as drafts_router
 from app.routers.tasks import router as tasks_router
+from app.routers.projects import router as projects_router
 from app.routers.followup import router as followup_router
 
 from app.routers.reminders import router as reminders_router
@@ -20,6 +22,9 @@ from app.routers.notifications import router as notifications_router
 
 from app.services.reminders import scan_deadline_reminders
 from app.services.notification_render import render_and_project_in_app
+from app.services.followup import build_followup_text
+from app.models.followup_run import FollowupRun
+from sqlalchemy import insert
 
 logger = get_logger(__name__)
 
@@ -60,6 +65,7 @@ async def mos_exception_handler(request: Request, exc: MOSException):
 app.include_router(chat_router)
 app.include_router(drafts_router)
 app.include_router(tasks_router)
+app.include_router(projects_router)
 app.include_router(followup_router)
 
 app.include_router(reminders_router)
@@ -98,6 +104,24 @@ async def startup():
         except Exception as e:
             logger.exception("Error in notification render job", error=str(e))
 
+    async def followup_job(slot: str):
+        """Run followup for specific time slot"""
+        try:
+            async with SessionLocal() as db:
+                text = await build_followup_text(db, slot)
+                if text:
+                    from app.models.message import Message
+                    await db.execute(insert(FollowupRun).values(slot=slot))
+                    await db.execute(
+                        insert(Message).values(role="assistant", content=text)
+                    )
+                    await db.commit()
+                    logger.info("Followup completed", slot=slot, text_length=len(text))
+                else:
+                    logger.warning("Empty followup text generated", slot=slot)
+        except Exception as e:
+            logger.exception("Error in followup job", slot=slot, error=str(e))
+
     # Schedule deadline scanning
     scheduler.add_job(
         scan_job,
@@ -120,6 +144,59 @@ async def startup():
         coalesce=True,
     )
     logger.info("Scheduled notification render job", interval_minutes=1)
+
+    # Schedule followups at specific times
+    # Parse time strings (format: "HH:MM")
+    def parse_time(time_str: str) -> tuple[int, int]:
+        """Parse time string 'HH:MM' into (hour, minute)"""
+        parts = time_str.split(":")
+        return int(parts[0]), int(parts[1])
+
+    morning_hour, morning_minute = parse_time(settings.FOLLOWUP_MORNING)
+    noon_hour, noon_minute = parse_time(settings.FOLLOWUP_NOON)
+    evening_hour, evening_minute = parse_time(settings.FOLLOWUP_EVENING)
+
+    # Morning followup
+    scheduler.add_job(
+        lambda: followup_job("morning"),
+        CronTrigger(hour=morning_hour, minute=morning_minute, timezone=settings.TZ),
+        id="followup_morning",
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info(
+        "Scheduled morning followup",
+        time=settings.FOLLOWUP_MORNING,
+        timezone=settings.TZ,
+    )
+
+    # Noon followup
+    scheduler.add_job(
+        lambda: followup_job("noon"),
+        CronTrigger(hour=noon_hour, minute=noon_minute, timezone=settings.TZ),
+        id="followup_noon",
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info(
+        "Scheduled noon followup",
+        time=settings.FOLLOWUP_NOON,
+        timezone=settings.TZ,
+    )
+
+    # Evening followup
+    scheduler.add_job(
+        lambda: followup_job("evening"),
+        CronTrigger(hour=evening_hour, minute=evening_minute, timezone=settings.TZ),
+        id="followup_evening",
+        max_instances=1,
+        coalesce=True,
+    )
+    logger.info(
+        "Scheduled evening followup",
+        time=settings.FOLLOWUP_EVENING,
+        timezone=settings.TZ,
+    )
 
     scheduler.start()
     logger.info("Scheduler started successfully")
