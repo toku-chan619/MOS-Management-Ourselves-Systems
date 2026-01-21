@@ -1,0 +1,192 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'claude/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  lint:
+    name: Lint and Format Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run Black (format check)
+        run: |
+          cd backend
+          black --check --diff app/ tests/
+
+      - name: Run Flake8 (linting)
+        run: |
+          cd backend
+          flake8 app/ tests/ --max-line-length=100 --extend-ignore=E203,W503
+
+      - name: Run MyPy (type checking)
+        run: |
+          cd backend
+          mypy app/ --ignore-missing-imports --no-strict-optional
+        continue-on-error: true  # Don't fail the build on type errors for now
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mos_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Create test .env file
+        run: |
+          cd backend
+          cat > .env << EOF
+          # Test Environment
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=postgres
+          POSTGRES_DB=mos_test
+          POSTGRES_PORT=5432
+          DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/mos_test
+
+          # Redis
+          REDIS_URL=redis://localhost:6379/0
+
+          # LLM (mock for testing)
+          LLM_BACKEND=openai_api
+          OPENAI_API_KEY=sk-test-key-for-ci
+          LLM_MODEL=gpt-4o-mini
+          PROMPT_VERSION=phase1-extract-v1
+
+          # App Config
+          APP_BASE_URL=http://localhost:8000
+          TZ=Asia/Tokyo
+          FOLLOWUP_MORNING=09:00
+          FOLLOWUP_NOON=13:00
+          FOLLOWUP_EVENING=18:00
+          REMINDER_SCAN_INTERVAL_MIN=10
+          RENDER_BATCH_SIZE=10
+          CORS_ORIGINS=http://localhost:3000
+          EOF
+
+      - name: Run database migrations
+        run: |
+          cd backend
+          alembic upgrade head
+
+      - name: Run tests with coverage
+        run: |
+          cd backend
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./backend/coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+        continue-on-error: true
+
+  test-matrix:
+    name: Test on Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd backend
+          pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests (SQLite)
+        run: |
+          cd backend
+          # Create minimal .env for SQLite tests
+          cat > .env << EOF
+          DATABASE_URL=sqlite+aiosqlite:///./test.db
+          REDIS_URL=redis://localhost:6379/0
+          OPENAI_API_KEY=sk-test-key
+          LLM_BACKEND=openai_api
+          LLM_MODEL=gpt-4o-mini
+          PROMPT_VERSION=phase1-extract-v1
+          APP_BASE_URL=http://localhost:8000
+          TZ=Asia/Tokyo
+          FOLLOWUP_MORNING=09:00
+          FOLLOWUP_NOON=13:00
+          FOLLOWUP_EVENING=18:00
+          REMINDER_SCAN_INTERVAL_MIN=10
+          RENDER_BATCH_SIZE=10
+          CORS_ORIGINS=http://localhost:3000
+          EOF
+
+          # Run only model tests on SQLite (integration tests require PostgreSQL)
+          pytest tests/models/ -v

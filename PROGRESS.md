@@ -520,7 +520,98 @@ asyncio_default_fixture_loop_scope = function
 3. **トラブルシューティング**: 一般的な問題と解決策を文書化
 4. **開発者体験**: クイックスタートガイドで新規開発者のオンボーディング時間短縮
 
-**コミット**: `[次のコミット]` - テスト環境修正とDocker運用ガイド作成
+**コミット**: `0aa466d` - テスト環境修正とDocker運用ガイド作成
+
+---
+
+## CI/CDパイプライン構築 ✅ 完了
+
+### 概要
+**完了時刻**: 2026-01-21
+
+GitHub Actionsを使用した包括的なCI/CDパイプラインを構築し、コード品質の自動チェックとテストを実装。
+
+### 実装内容
+
+#### GitHub Actions ワークフロー
+
+**1. CIワークフロー (`.github/workflows/ci.yml`)**
+- [x] Lintジョブ（Black, Flake8, MyPy）
+- [x] Testジョブ（PostgreSQL + Redis環境でのテスト実行）
+- [x] Test Matrixジョブ（Python 3.11/3.12での互換性テスト）
+- [x] カバレッジレポート生成（Codecov連携）
+
+**2. Dockerワークフロー (`.github/workflows/docker.yml`)**
+- [x] Dockerイメージビルドテスト
+- [x] docker-compose ビルドテスト
+- [x] サービスヘルスチェック（PostgreSQL, Redis）
+- [x] マイグレーション実行確認
+- [x] API起動とヘルスチェック
+
+#### コード品質設定ファイル
+
+- **backend/.flake8**: リント設定（最大行長100、除外ディレクトリ）
+- **backend/pyproject.toml**: Black/MyPy/pytest/coverage設定
+- **backend/requirements-dev.txt**: pytest-cov追加
+
+#### 開発者ツール
+
+**backend/Makefile** - 開発コマンド統一:
+- `make ci`: すべてのCIチェック実行
+- `make format`: コード自動フォーマット
+- `make lint`: Flake8リント
+- `make type-check`: MyPy型チェック
+- `make test-cov`: カバレッジ付きテスト
+- `make docker-build/up/down`: Docker操作
+
+#### ドキュメント
+
+- **docs/CI_CD.md**: 包括的なCI/CDガイド（ワークフロー、使い方、トラブルシューティング）
+- **README.md**: CI/CDバッジとドキュメントリンク追加
+- **.gitignore**: テスト/カバレッジ/型チェック関連ファイル除外
+
+### ワークフロー構成
+
+| ワークフロー | ジョブ | 実行時間 | 目的 |
+|------------|-------|---------|------|
+| CI | Lint | ~2分 | コード品質チェック |
+| CI | Test | ~5分 | PostgreSQL環境でのテスト |
+| CI | Test Matrix | ~3分 | 複数Python版での互換性 |
+| Docker | Build | ~8分 | Docker環境の動作確認 |
+
+### チェック項目
+
+**コード品質:**
+- ✅ Black: コードフォーマット統一（行長100）
+- ✅ Flake8: PEP8準拠チェック
+- ✅ MyPy: 型アノテーションチェック
+
+**テスト:**
+- ✅ pytest: 単体テスト + 統合テスト
+- ✅ カバレッジ: レポート生成とCodecov連携
+- ✅ PostgreSQL/Redis: 本番相当環境でのテスト
+
+**Docker:**
+- ✅ イメージビルド、サービス起動、ヘルスチェック、マイグレーション確認
+
+### メリット
+
+1. **品質保証**: すべてのコミットで自動テスト実行
+2. **統一性**: コードスタイルの自動チェック
+3. **早期発見**: 問題を早期に発見し修正
+4. **開発効率**: ローカルでも同じチェックを実行可能
+5. **信頼性**: PRマージ前に品質を保証
+
+### 使用方法
+
+```bash
+cd backend
+make ci              # すべてのCIチェック
+make format          # 自動フォーマット
+make test-cov        # カバレッジ付きテスト
+```
+
+**コミット**: `[次のコミット]` - CI/CDパイプライン構築: GitHub Actions + 品質チェック自動化
 
 ---
 
@@ -535,8 +626,10 @@ asyncio_default_fixture_loop_scope = function
 - [ ] ページネーション実装（中優先度）
 - [ ] テストデータスクリプト（中優先度）
 - [ ] Celery監視ツール（Flower）（中優先度）
-- [ ] CI/CDパイプライン（低優先度）
+- [x] CI/CDパイプライン（完了）
 - [ ] パフォーマンス最適化（低優先度）
+- [ ] セキュリティスキャン（Bandit, Safety）
+- [ ] 依存関係自動更新（Dependabot）
 
 ---
 

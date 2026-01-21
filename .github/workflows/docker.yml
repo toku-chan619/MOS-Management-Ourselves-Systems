@@ -1,0 +1,114 @@
+name: Docker Build
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'claude/**'
+  pull_request:
+    branches:
+      - main
+      - develop
+
+jobs:
+  docker-build:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create test .env file
+        run: |
+          cd backend
+          cat > .env << EOF
+          POSTGRES_USER=postgres
+          POSTGRES_PASSWORD=postgres
+          POSTGRES_DB=mos
+          POSTGRES_PORT=5432
+          DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/mos
+          REDIS_URL=redis://redis:6379/0
+          LLM_BACKEND=openai_api
+          OPENAI_API_KEY=sk-test-key-for-docker-build
+          LLM_MODEL=gpt-4o-mini
+          PROMPT_VERSION=phase1-extract-v1
+          APP_BASE_URL=http://localhost:8000
+          TZ=Asia/Tokyo
+          FOLLOWUP_MORNING=09:00
+          FOLLOWUP_NOON=13:00
+          FOLLOWUP_EVENING=18:00
+          REMINDER_SCAN_INTERVAL_MIN=10
+          RENDER_BATCH_SIZE=10
+          CORS_ORIGINS=http://localhost:3000
+          EOF
+
+      - name: Build Docker image
+        run: |
+          cd backend
+          docker build -t mos-backend:test .
+
+      - name: Test docker-compose build
+        run: |
+          cd backend
+          docker-compose build
+
+      - name: Start services with docker-compose
+        run: |
+          cd backend
+          docker-compose up -d db redis
+          sleep 10
+
+      - name: Check if services are healthy
+        run: |
+          cd backend
+          docker-compose ps
+
+          # Check PostgreSQL
+          docker-compose exec -T db pg_isready -U postgres || exit 1
+
+          # Check Redis
+          docker-compose exec -T redis redis-cli ping || exit 1
+
+      - name: Run migrations in container
+        run: |
+          cd backend
+          docker-compose run --rm migration
+
+      - name: Start API service
+        run: |
+          cd backend
+          docker-compose up -d api
+          sleep 10
+
+      - name: Check API health
+        run: |
+          cd backend
+          # Wait for API to be ready
+          for i in {1..30}; do
+            if curl -f http://localhost:8000/health; then
+              echo "API is healthy"
+              exit 0
+            fi
+            echo "Waiting for API... ($i/30)"
+            sleep 2
+          done
+          echo "API failed to become healthy"
+          docker-compose logs api
+          exit 1
+
+      - name: Show logs on failure
+        if: failure()
+        run: |
+          cd backend
+          docker-compose logs
+
+      - name: Clean up
+        if: always()
+        run: |
+          cd backend
+          docker-compose down -v

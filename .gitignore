@@ -1,7 +1,10 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
 .venv/
+venv/
 .envrc
 
 # secrets
@@ -9,5 +12,35 @@ __pycache__/
 .env.*
 !.env.example
 
+# Testing & Coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+*.cover
+.hypothesis/
+
+# Type checking & Linting
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
 # OS
 .DS_Store
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build
+dist/
+build/
+*.egg
+
+# Database
+*.db
+*.sqlite
+*.sqlite3

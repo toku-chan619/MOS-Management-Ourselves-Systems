@@ -1,5 +1,8 @@
 # Management Ourselves System (MOS)
 
+![CI](https://github.com/yourusername/MOS-Management-Ourselves-Systems/workflows/CI/badge.svg)
+![Docker Build](https://github.com/yourusername/MOS-Management-Ourselves-Systems/workflows/Docker%20Build/badge.svg)
+
 MOS（Management Ourselves System）は、個人のタスクを **チャットから抽出 → 提案（Draft）→ ユーザーが確定** する形で管理し、朝/昼/夕のフォローで「見落とし」と「停滞」を減らすためのAIタスク管理システムです。
 
 本リポジトリのPhase1（MVP）は **1人利用・Web・ローカル運用優先** を前提に、最短で価値が出る「タスク化・階層管理・定期フォロー」を作ります。
@@ -119,6 +122,7 @@ curl http://localhost:8000/health
 
 - **[Docker Setup Guide](./docs/DOCKER_SETUP.md)**: Docker環境でのセットアップ・運用ガイド
 - **[LLM Providers](./docs/LLM_PROVIDERS.md)**: LLMバックエンドの選択と設定（OpenAI / Claude CLI / Ollama）
+- **[CI/CD Pipeline](./docs/CI_CD.md)**: 継続的インテグレーション/デプロイメントガイド
 
 ---
 
