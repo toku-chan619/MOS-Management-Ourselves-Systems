@@ -12,6 +12,12 @@ import type {
   MessageCreate,
   FollowupRun,
   PaginatedResponse,
+  TaskAction,
+  ActionProposal,
+  ProposeActionsRequest,
+  CreateActionRequest,
+  ExecuteActionRequest,
+  ExecuteActionResponse,
 } from "@/types";
 
 const API_BASE_URL =
@@ -180,6 +186,78 @@ class APIClient {
 
   async triggerFollowup(period: string): Promise<FollowupRun> {
     const { data } = await this.client.post("/followup/trigger", { period });
+    return data;
+  }
+
+  // Actions API
+  async proposeActions(
+    taskId: string,
+    request: ProposeActionsRequest
+  ): Promise<ActionProposal[]> {
+    const { data } = await this.client.post(
+      `/tasks/${taskId}/actions/propose`,
+      request
+    );
+    return data;
+  }
+
+  async getTaskActions(
+    taskId: string,
+    params?: { status?: string }
+  ): Promise<TaskAction[]> {
+    const { data } = await this.client.get(`/tasks/${taskId}/actions`, {
+      params,
+    });
+    return data;
+  }
+
+  async getAction(actionId: string): Promise<TaskAction> {
+    const { data } = await this.client.get(`/actions/${actionId}`);
+    return data;
+  }
+
+  async createAction(
+    taskId: string,
+    request: CreateActionRequest
+  ): Promise<TaskAction> {
+    const { data } = await this.client.post(`/tasks/${taskId}/actions`, request);
+    return data;
+  }
+
+  async approveAction(actionId: string): Promise<TaskAction> {
+    const { data } = await this.client.post(`/actions/${actionId}/approve`);
+    return data;
+  }
+
+  async executeAction(
+    actionId: string,
+    request?: ExecuteActionRequest
+  ): Promise<ExecuteActionResponse> {
+    const { data } = await this.client.post(
+      `/actions/${actionId}/execute`,
+      request || {}
+    );
+    return data;
+  }
+
+  async cancelAction(actionId: string): Promise<TaskAction> {
+    const { data } = await this.client.post(`/actions/${actionId}/cancel`);
+    return data;
+  }
+
+  async rollbackAction(actionId: string): Promise<ExecuteActionResponse> {
+    const { data } = await this.client.post(`/actions/${actionId}/rollback`);
+    return data;
+  }
+
+  async getActionTypes(): Promise<
+    Array<{
+      action_type: string;
+      description: string;
+      supports_rollback: boolean;
+    }>
+  > {
+    const { data } = await this.client.get("/actions/types");
     return data;
   }
 }

@@ -84,12 +84,14 @@ export default function TasksPage() {
           </button>
 
           <div className="flex-1 min-w-0">
-            <h3 className={clsx(
-              "font-medium text-gray-900",
-              task.status === TaskStatus.DONE && "line-through text-gray-500"
-            )}>
-              {task.title}
-            </h3>
+            <Link href={`/tasks/${task.task_id}`}>
+              <h3 className={clsx(
+                "font-medium text-gray-900 hover:text-blue-600 transition-colors cursor-pointer",
+                task.status === TaskStatus.DONE && "line-through text-gray-500"
+              )}>
+                {task.title}
+              </h3>
+            </Link>
 
             {task.description && (
               <p className="text-sm text-gray-600 mt-1 line-clamp-2">
