@@ -107,6 +107,15 @@ def extract_and_store_draft(self, message_id: str, user_text: str):
                         message_id=message_id
                     )
 
+                    # Send notification if drafts were created
+                    if draft.tasks and len(draft.tasks) > 0:
+                        try:
+                            from app.services.notifications import send_draft_notification
+                            await send_draft_notification(len(draft.tasks))
+                            logger.info("Draft notification sent", count=len(draft.tasks))
+                        except Exception as e:
+                            logger.error("Failed to send draft notification", error=str(e))
+
                 except SQLAlchemyError as e:
                     await db.rollback()
                     logger.error(

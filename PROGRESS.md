@@ -767,7 +767,165 @@ docker-compose up -d
 # API: http://localhost:8000
 ```
 
-**コミット**: `[次のコミット]` - Phase 3完了: Next.jsフロントエンド実装（MVP）
+**コミット**: `2a55f58` - Phase 3完了: Next.jsフロントエンド実装（MVP）
+
+---
+
+## Phase 2-A: 外部通知・Webhook統合 ✅ 完了
+
+### 概要
+**完了時刻**: 2026-01-21
+
+外部サービス（LINE、Slack、Discord）との連携機能を実装。外部からタスク入力を受信し、フォローアップや通知を外部アプリに送信できるようにしました。
+
+### アーキテクチャ
+
+```
+外部入力（LINE/Slack/Discord）
+    ↓ Webhook
+[ローカルMOS] ← データ保存・処理
+    ↓ 通知API
+外部出力（同じアプリに通知）
+```
+
+### 実装内容
+
+#### 1. 通知サービス（`app/services/notifications.py`）
+
+**サポートプロバイダ:**
+- LINE Notify: 最も簡単な通知専用サービス
+- Slack Incoming Webhooks: Slackチャンネルへの通知
+- Discord Webhooks: Discordチャンネルへの通知
+
+**主要機能:**
+- `NotificationManager`: 複数プロバイダの一元管理
+- `send_followup_notification()`: フォローアップ通知送信
+- `send_draft_notification()`: Draft作成通知
+- `send_task_reminder()`: タスクリマインダー（将来用）
+
+#### 2. Webhook受信エンドポイント（`app/routers/webhook.py`）
+
+**エンドポイント:**
+- `POST /api/webhook/line`: LINE Messaging API受信
+- `POST /api/webhook/slack`: Slack Events API受信
+- `POST /api/webhook/discord`: Discord Bot受信
+- `GET /api/webhook/status`: 設定状態確認
+
+**セキュリティ:**
+- LINE: HMAC-SHA256署名検証（`X-Line-Signature`）
+- Slack: HMAC-SHA256署名検証（`X-Slack-Signature`）
+- Discord: Bot統合必要
+
+#### 3. 通知統合
+
+**フォローアップ通知:**
+- 朝/昼/夕のフォローアップ生成時に自動送信
+- `main.py`の`followup_job()`で統合
+
+**Draft作成通知:**
+- タスク案が生成された時に自動送信
+- `workers/tasks.py`の`extract_and_store_draft`で統合
+
+#### 4. 設定管理
+
+**環境変数（`config.py` + `.env.example`）:**
+```env
+# 通知送信用
+LINE_NOTIFY_TOKEN=
+SLACK_WEBHOOK_URL=
+DISCORD_WEBHOOK_URL=
+
+# Webhook受信用（署名検証）
+LINE_CHANNEL_SECRET=
+SLACK_SIGNING_SECRET=
+```
+
+### 使い方
+
+#### LINE Notify（5分で完了）
+
+1. https://notify-bot.line.me/ でトークン発行
+2. `.env`に設定:
+   ```env
+   LINE_NOTIFY_TOKEN=あなたのトークン
+   ```
+3. API再起動: `docker-compose restart api`
+4. フォローアップ時刻になると自動的にLINEに通知
+
+#### Webhook受信（LINE Messaging API）
+
+1. LINE Developers でチャネル作成
+2. Webhook URL設定: `https://ドメイン/api/webhook/line`
+3. Channel Secret設定
+4. LINEでBotに「明日までにレポート完成」→タスク生成
+
+### メリット
+
+1. **外出先からタスク入力**: スマホで簡単に入力
+2. **リアルタイム通知**: フォローアップやDraft生成を即座に通知
+3. **セキュリティ**: データはローカルに保存、外部には出さない
+4. **柔軟性**: 複数サービスを併用可能
+
+### 技術的詳細
+
+**署名検証実装:**
+```python
+# LINE
+hash_digest = hmac.new(
+    channel_secret.encode('utf-8'),
+    body,
+    hashlib.sha256
+).digest()
+expected_signature = base64.b64encode(hash_digest).decode('utf-8')
+```
+
+**通知送信（非同期）:**
+```python
+async with httpx.AsyncClient() as client:
+    response = await client.post(
+        API_URL,
+        headers={"Authorization": f"Bearer {token}"},
+        data={"message": message}
+    )
+```
+
+### ファイル構成
+
+```
+backend/app/
+├── services/
+│   └── notifications.py         # 通知サービス実装（270行）
+├── routers/
+│   └── webhook.py              # Webhook受信（220行）
+├── core/
+│   └── config.py               # 環境変数設定更新
+├── workers/
+│   └── tasks.py                # Draft通知統合
+└── main.py                     # フォローアップ通知統合
+
+docs/
+└── EXTERNAL_NOTIFICATIONS.md   # 包括的なセットアップガイド
+```
+
+### ドキュメント
+
+**docs/EXTERNAL_NOTIFICATIONS.md**（400行超）:
+- LINE/Slack/Discordのセットアップ手順
+- API エンドポイント仕様
+- トラブルシューティング
+- セキュリティベストプラクティス
+- 本番環境デプロイガイド
+
+### 今後の拡張
+
+- [ ] タスクリマインダー通知の実装
+- [ ] インタラクティブボタン（LINE/Slack）
+- [ ] リッチメッセージフォーマット
+- [ ] メール通知統合
+- [ ] Telegram統合
+- [ ] 通知設定UI（フロントエンド）
+
+**コミット**: `[次のコミット]` - Phase 2-A完了: 外部通知・Webhook統合
 
 ---
 

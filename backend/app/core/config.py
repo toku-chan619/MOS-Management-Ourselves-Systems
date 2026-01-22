@@ -31,6 +31,15 @@ class Settings(BaseSettings):
     REMINDER_SCAN_INTERVAL_MIN: int = 10
     RENDER_BATCH_SIZE: int = 10
 
+    # External Notification Providers
+    LINE_NOTIFY_TOKEN: str = ""
+    SLACK_WEBHOOK_URL: str = ""
+    DISCORD_WEBHOOK_URL: str = ""
+
+    # Webhook Verification
+    LINE_CHANNEL_SECRET: str = ""
+    SLACK_SIGNING_SECRET: str = ""
+
     # CORS Configuration
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000"
 

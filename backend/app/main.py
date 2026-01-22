@@ -16,6 +16,7 @@ from app.routers.drafts import router as drafts_router
 from app.routers.tasks import router as tasks_router
 from app.routers.projects import router as projects_router
 from app.routers.followup import router as followup_router
+from app.routers.webhook import router as webhook_router
 
 from app.routers.reminders import router as reminders_router
 from app.routers.notifications import router as notifications_router
@@ -67,6 +68,7 @@ app.include_router(drafts_router)
 app.include_router(tasks_router)
 app.include_router(projects_router)
 app.include_router(followup_router)
+app.include_router(webhook_router)
 
 app.include_router(reminders_router)
 app.include_router(notifications_router)
@@ -111,12 +113,21 @@ async def startup():
                 text = await build_followup_text(db, slot)
                 if text:
                     from app.models.message import Message
+                    from app.services.notifications import send_followup_notification
+
                     await db.execute(insert(FollowupRun).values(slot=slot))
                     await db.execute(
                         insert(Message).values(role="assistant", content=text)
                     )
                     await db.commit()
                     logger.info("Followup completed", slot=slot, text_length=len(text))
+
+                    # Send external notifications
+                    try:
+                        results = await send_followup_notification(slot, text)
+                        logger.info("Followup notifications sent", results=results)
+                    except Exception as e:
+                        logger.error("Failed to send followup notifications", error=str(e))
                 else:
                     logger.warning("Empty followup text generated", slot=slot)
         except Exception as e:
