@@ -1,7 +1,7 @@
 import uuid
 from sqlalchemy import Date, Time, DateTime, Text, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from app.models.base import Base
 
@@ -30,3 +30,6 @@ class Task(Base):
 
     created_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[object] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # Relationships
+    actions = relationship("TaskAction", back_populates="task", cascade="all, delete-orphan")

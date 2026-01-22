@@ -20,6 +20,7 @@ from app.routers.webhook import router as webhook_router
 
 from app.routers.reminders import router as reminders_router
 from app.routers.notifications import router as notifications_router
+from app.routers.actions import router as actions_router
 
 from app.services.reminders import scan_deadline_reminders
 from app.services.notification_render import render_and_project_in_app
@@ -72,6 +73,7 @@ app.include_router(webhook_router)
 
 app.include_router(reminders_router)
 app.include_router(notifications_router)
+app.include_router(actions_router)
 
 scheduler = AsyncIOScheduler(timezone=ZoneInfo(settings.TZ))
 
