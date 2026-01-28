@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     LINE_CHANNEL_SECRET: str = ""
     SLACK_SIGNING_SECRET: str = ""
 
+    # Messaging Platform Integration
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_ALLOWED_USERS: str = ""  # Comma-separated user IDs
+    SLACK_BOT_TOKEN: str = ""
+    SLACK_APP_TOKEN: str = ""  # For Socket Mode
+
     # CORS Configuration
     CORS_ORIGINS: str = "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000"
 
@@ -47,5 +53,15 @@ class Settings(BaseSettings):
     def cors_origins_list(self) -> list[str]:
         """Parse CORS origins from comma-separated string"""
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def telegram_allowed_users_list(self) -> list[int]:
+        """Parse Telegram allowed users from comma-separated string"""
+        if not self.TELEGRAM_ALLOWED_USERS:
+            return []
+        try:
+            return [int(uid.strip()) for uid in self.TELEGRAM_ALLOWED_USERS.split(",") if uid.strip()]
+        except ValueError:
+            return []
 
 settings = Settings()

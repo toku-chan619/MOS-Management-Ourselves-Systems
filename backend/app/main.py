@@ -28,7 +28,17 @@ from app.services.followup import build_followup_text
 from app.models.followup_run import FollowupRun
 from sqlalchemy import insert
 
+# Messaging Integration
+from app.services.messaging.manager import MessagingManager
+from app.services.messaging.telegram import TelegramChannel
+from app.services.messaging.slack import SlackChannel
+from app.services.messaging.integration import MessagingIntegration
+
 logger = get_logger(__name__)
+
+# Global messaging manager
+messaging_manager: MessagingManager = None
+messaging_integration: MessagingIntegration = None
 
 app = FastAPI(
     title="MOS Backend",
@@ -81,12 +91,65 @@ scheduler = AsyncIOScheduler(timezone=ZoneInfo(settings.TZ))
 @app.on_event("startup")
 async def startup():
     """Application startup: Initialize scheduler and background jobs"""
+    global messaging_manager, messaging_integration
+
     logger.info(
         "Starting MOS Backend",
         version="0.1.0",
         timezone=settings.TZ,
         reminder_interval_min=settings.REMINDER_SCAN_INTERVAL_MIN
     )
+
+    # Initialize messaging system
+    messaging_manager = MessagingManager()
+
+    # Setup Telegram Bot if configured
+    if settings.TELEGRAM_BOT_TOKEN:
+        logger.info("Initializing Telegram Bot integration")
+        telegram = TelegramChannel(
+            token=settings.TELEGRAM_BOT_TOKEN,
+            allowed_users=settings.telegram_allowed_users_list,
+        )
+
+        # Create integration service
+        async with SessionLocal() as db:
+            messaging_integration = MessagingIntegration(messaging_manager, db)
+
+            # Register handlers
+            telegram.on_message(messaging_integration.handle_incoming_message)
+            telegram.on_button_click("*", messaging_integration.handle_button_click)
+
+        messaging_manager.register_channel(telegram)
+    else:
+        logger.info("Telegram Bot not configured")
+
+    # Setup Slack Bot if configured
+    if settings.SLACK_BOT_TOKEN:
+        logger.info("Initializing Slack Bot integration")
+        slack = SlackChannel(
+            bot_token=settings.SLACK_BOT_TOKEN,
+            app_token=settings.SLACK_APP_TOKEN if settings.SLACK_APP_TOKEN else None,
+        )
+
+        # Create integration service if not already created
+        if not messaging_integration:
+            async with SessionLocal() as db:
+                messaging_integration = MessagingIntegration(messaging_manager, db)
+
+        # Register handlers
+        slack.on_message(messaging_integration.handle_incoming_message)
+        slack.on_button_click("*", messaging_integration.handle_button_click)
+
+        messaging_manager.register_channel(slack)
+    else:
+        logger.info("Slack Bot not configured")
+
+    # Start all messaging channels
+    if messaging_manager.list_channels():
+        await messaging_manager.start_all()
+        logger.info("Messaging system initialized", channels=messaging_manager.list_channels())
+    else:
+        logger.info("No messaging channels configured")
 
     async def scan_job():
         """Scan for deadline reminders"""
@@ -218,6 +281,14 @@ async def startup():
 @app.on_event("shutdown")
 async def shutdown():
     """Application shutdown: Clean up resources"""
+    global messaging_manager
+
     logger.info("Shutting down MOS Backend")
+
+    # Stop messaging system
+    if messaging_manager:
+        await messaging_manager.stop_all()
+        logger.info("Messaging system stopped")
+
     scheduler.shutdown()
     logger.info("Scheduler stopped")
